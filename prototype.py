@@ -26,8 +26,8 @@ def strip_words(text):
         for word in re.split(r'-{2,}', words):
             yield word
 
-LOOKBACK = 10
-CACHESIZE = 2000
+LOOKBACK = 20
+CACHESIZE = 6000
 cache = Cache(CACHESIZE)
 def train_stream(input_dir):
     X = []
@@ -51,27 +51,30 @@ class DS(T.utils.data.IterableDataset):
         for x, y in self.gen:
             yield T.tensor(x).to(device), T.tensor(y).to(device)
 
-class GRU(T.nn.Module):
+class RNN(T.nn.Module):
     def __init__(self, num_embeddings, embedding_dim, hidden_dim, n_layers, drop_prob=0.2):
-        super(GRU, self).__init__()
+        super(RNN, self).__init__()
         self.hidden_dim = hidden_dim
         self.n_layers = n_layers
 
         self.embed = T.nn.Embedding(num_embeddings, embedding_dim)
-        self.gru = T.nn.GRU(embedding_dim, hidden_dim, n_layers, batch_first=True, dropout=drop_prob)
+        self.gru = T.nn.LSTM(input_size=embedding_dim, hidden_size=hidden_dim, num_layers=n_layers, dropout=drop_prob)
         self.fc = T.nn.Linear(hidden_dim, num_embeddings)
 
     def forward(self, x, h):
         embeds = self.embed(x)
-        out, h = self.gru(embeds, h)
-        out = self.fc(out)
-        return out, h
+        out, nh = self.gru(embeds, h)
+        logits = self.fc(out)
+        return logits, nh
 
     def init_hidden(self, l):
-        hidden = T.zeros(self.n_layers, l, self.hidden_dim).to(device)
+        hidden = (
+            T.zeros(self.n_layers, l, self.hidden_dim).to(device),
+            T.zeros(self.n_layers, l, self.hidden_dim).to(device)
+        )
         return hidden
 
-BATCHSIZE = 100
+BATCHSIZE = 40
 def train(rnn, loader):
     rnn.to(device)
     rnn.train()
@@ -81,17 +84,18 @@ def train(rnn, loader):
     ti = time()
     counter = 0
     avg_loss = 0.
-    h = rnn.init_hidden(BATCHSIZE)
+    state_h, state_c = rnn.init_hidden(LOOKBACK)
     for x, y in loader:
         counter += 1
-        h = h.data
         optimizer.zero_grad()
-        out, h = rnn(x, h)
+        out, (state_h, state_c) = rnn(x, (state_h, state_c))
         loss = criterion(out.transpose(1, 2), y)
-        h = h.detach()
 
-        loss.backward(retain_graph=True)
-        T.nn.utils.clip_grad_norm_(rnn.parameters(), 5)
+        state_h = state_h.detach()
+        state_c = state_c.detach()
+
+        loss.backward()
+        # T.nn.utils.clip_grad_norm_(rnn.parameters(), 5)
         optimizer.step()
         avg_loss += loss.item()
         if counter % 1000 == 0:
@@ -106,33 +110,34 @@ def main():
 
     ds = DS(train_stream(args.input_dir))
     loader = T.utils.data.DataLoader(ds, batch_size=BATCHSIZE, drop_last=True)
-    rnn = GRU(CACHESIZE, 128, 256, 3)
+    rnn = RNN(CACHESIZE, 128, 256, 3)
     try:
         train(rnn, loader)
     except KeyboardInterrupt:
-        rnn.eval()
-        while True:
-            seed = input('5 words: ')
-            seed_x = []
-            for word in strip_words(seed):
-                result = cache.get_replace(word)
-                seed_x.append(result.idx)
-            if len(seed_x) == 0:
-                continue
+        pass
 
-            text = []
-            h = rnn.init_hidden(len(seed_x))
-            for i in range(100):
-                h = h.data
-                out, h = rnn(T.tensor([seed_x]).T.to(device), h)
-                last_word_logits = out[0][-1]
-                p = T.nn.functional.softmax(last_word_logits, dim=0).detach().cpu().numpy()
-                word_index = np.random.choice(len(last_word_logits), p=p)
-                text.append(cache.get_by_idx(word_index).key)
-                seed_x.append(word_index)
-                seed_x.pop(0)
+    rnn.eval()
+    while True:
+        seed = input('5 words: ')
+        seed_x = []
+        for word in strip_words(seed):
+            result = cache.get_replace(word)
+            seed_x.append(result.idx)
+        if len(seed_x) == 0:
+            continue
 
-            print(' '.join(text))
+        text = []
+        state_h, state_c = rnn.init_hidden(len(seed_x))
+        for i in range(100):
+            out, (state_h, state_c) = rnn(T.tensor([seed_x]).to(device), (state_h, state_c))
+            last_word_logits = out[0][-1]
+            p = T.nn.functional.softmax(last_word_logits, dim=0).detach().cpu().numpy()
+            word_index = np.random.choice(len(last_word_logits), p=p)
+            text.append(cache.get_by_idx(word_index).key)
+            seed_x.append(word_index)
+            seed_x.pop(0)
+
+        print(' '.join(text))
 
 
 
