@@ -58,7 +58,7 @@ class RNN(T.nn.Module):
         self.n_layers = n_layers
 
         self.embed = T.nn.Embedding(num_embeddings, embedding_dim)
-        self.gru = T.nn.LSTM(input_size=embedding_dim, hidden_size=hidden_dim, num_layers=n_layers, dropout=drop_prob)
+        self.gru = T.nn.LSTM(input_size=embedding_dim, hidden_size=hidden_dim, num_layers=n_layers, batch_first=True, dropout=drop_prob)
         self.fc = T.nn.Linear(hidden_dim, num_embeddings)
 
     def forward(self, x, h):
@@ -74,7 +74,7 @@ class RNN(T.nn.Module):
         )
         return hidden
 
-BATCHSIZE = 40
+BATCHSIZE = 100
 def train(rnn, loader):
     rnn.to(device)
     rnn.train()
@@ -84,7 +84,7 @@ def train(rnn, loader):
     ti = time()
     counter = 0
     avg_loss = 0.
-    state_h, state_c = rnn.init_hidden(LOOKBACK)
+    state_h, state_c = rnn.init_hidden(BATCHSIZE)
     for x, y in loader:
         counter += 1
         optimizer.zero_grad()
@@ -121,13 +121,15 @@ def main():
         seed = input('5 words: ')
         seed_x = []
         for word in strip_words(seed):
-            result = cache.get_replace(word)
+            result = cache.get_by_key(word)
+            if result is None:
+                break
             seed_x.append(result.idx)
         if len(seed_x) == 0:
             continue
 
         text = []
-        state_h, state_c = rnn.init_hidden(len(seed_x))
+        state_h, state_c = rnn.init_hidden(1)
         for i in range(100):
             out, (state_h, state_c) = rnn(T.tensor([seed_x]).to(device), (state_h, state_c))
             last_word_logits = out[0][-1]
