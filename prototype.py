@@ -2,6 +2,7 @@
 
 import argparse
 import numpy as np
+import os
 import re
 import torch as T
 from cache import Cache
@@ -16,24 +17,37 @@ def read_files(input_dir):
     for text_file in path.iterdir():
         if not text_file.name.endswith('.txt'):
             continue
-        yield text_file.read_text()
+        with text_file.open() as f:
+            while f.tell() < os.fstat(f.fileno()).st_size:
+                line = f.readline()
+                if line.startswith('Page |'):
+                    continue
+                yield line
 
 def strip_words(text):
-    for match in re.finditer(r"[-'a-zA-Z0-9]+|[\.\,\?\!\:\;\(\)]", text):
+    for match in re.finditer(r"[-'’a-zA-Z0-9]+|[\.\,\?\!\:\;\(\)]", text):
         words = match.group(0).lower()
         if words == 'br':
             continue
         for word in re.split(r'-{2,}', words):
             yield word
 
-LOOKBACK = 20
-CACHESIZE = 6000
+LOOKBACK = 5
+CACHESIZE = 20000
 cache = Cache(CACHESIZE)
 def train_stream(input_dir):
     X = []
+    words = 0
+    hits = 0
     for text in read_files(input_dir):
         for word in strip_words(text):
             result = cache.get_replace(word)
+            words += 1
+            hits += 1 if result.is_hit else 0
+            if words % 100000 == 0:
+                print("Cache hit ratio: {:.4f}".format(hits/words))
+                words = 0
+                hits = 0
             if len(X) <= LOOKBACK:
                 X.append(result.idx)
             else:
@@ -52,13 +66,13 @@ class DS(T.utils.data.IterableDataset):
             yield T.tensor(x).to(device), T.tensor(y).to(device)
 
 class RNN(T.nn.Module):
-    def __init__(self, num_embeddings, embedding_dim, hidden_dim, n_layers, drop_prob=0.2):
+    def __init__(self, num_embeddings, embedding_dim, hidden_dim, n_layers):
         super(RNN, self).__init__()
         self.hidden_dim = hidden_dim
         self.n_layers = n_layers
 
         self.embed = T.nn.Embedding(num_embeddings, embedding_dim)
-        self.gru = T.nn.LSTM(input_size=embedding_dim, hidden_size=hidden_dim, num_layers=n_layers, batch_first=True, dropout=drop_prob)
+        self.gru = T.nn.LSTM(input_size=embedding_dim, hidden_size=hidden_dim, num_layers=n_layers, batch_first=True)
         self.fc = T.nn.Linear(hidden_dim, num_embeddings)
 
     def forward(self, x, h):
@@ -75,9 +89,7 @@ class RNN(T.nn.Module):
         return hidden
 
 BATCHSIZE = 100
-def train(rnn, loader):
-    rnn.to(device)
-    rnn.train()
+def train(rnn, loader, epoch):
     criterion = T.nn.CrossEntropyLoss()
     optimizer = T.optim.Adam(rnn.parameters(), lr=0.001)
 
@@ -89,17 +101,18 @@ def train(rnn, loader):
         counter += 1
         optimizer.zero_grad()
         out, (state_h, state_c) = rnn(x, (state_h, state_c))
+        # print(out.shape, out.transpose(1, 2).shape, y.shape)
         loss = criterion(out.transpose(1, 2), y)
 
         state_h = state_h.detach()
         state_c = state_c.detach()
 
         loss.backward()
-        # T.nn.utils.clip_grad_norm_(rnn.parameters(), 5)
+        # T.nn.utils.clip_grad_norm_(rnn.parameters(), 0.5)
         optimizer.step()
         avg_loss += loss.item()
         if counter % 1000 == 0:
-            print("batch: {} (last 1000 batches in {:.2f} s) Average Loss: {}".format(counter, time() - ti, avg_loss/counter))
+            print("epoch: {} batch: {} (last 1000 batches in {:.2f} s) Average Loss: {}".format(epoch, counter, time() - ti, avg_loss/counter))
             ti = time()
 
 
@@ -108,11 +121,21 @@ def main():
     parser.add_argument('input_dir', type=str)
     args = parser.parse_args()
 
-    ds = DS(train_stream(args.input_dir))
-    loader = T.utils.data.DataLoader(ds, batch_size=BATCHSIZE, drop_last=True)
-    rnn = RNN(CACHESIZE, 128, 256, 3)
+    # warm up
+    i = 0
+    for _ in train_stream(args.input_dir):
+        if i == 1000000:
+            break
+        i += 1
+
+    rnn = RNN(CACHESIZE, 128, 256, 1)
+    rnn.to(device)
+    rnn.train()
     try:
-        train(rnn, loader)
+        for e in range(1):
+            ds = DS(train_stream(args.input_dir))
+            loader = T.utils.data.DataLoader(ds, batch_size=BATCHSIZE, drop_last=True)
+            train(rnn, loader, e)
     except KeyboardInterrupt:
         pass
 
@@ -141,9 +164,17 @@ def main():
 
         print(' '.join(text))
 
+def test():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('input_dir', type=str)
+    args = parser.parse_args()
 
+    for text in read_files(args.input_dir):
+        for word in strip_words(text):
+            print(word)
 
 if __name__ == '__main__':
     main()
+    # test()
 
 
