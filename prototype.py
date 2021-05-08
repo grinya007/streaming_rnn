@@ -33,16 +33,20 @@ def strip_words(text):
             yield word
 
 LOOKBACK = 5
-CACHESIZE = 20000
+CACHESIZE = 10000
 cache = Cache(CACHESIZE)
-def train_stream(input_dir):
+def train_stream(input_dir, skip=0):
     X = []
+    c = 0
     words = 0
     hits = 0
     for text in read_files(input_dir):
         for word in strip_words(text):
-            result = cache.get_replace(word)
+            c += 1
+            if c <= skip:
+                continue
             words += 1
+            result = cache.get_replace(word)
             hits += 1 if result.is_hit else 0
             if words % 100000 == 0:
                 print("Cache hit ratio: {:.4f}".format(hits/words))
@@ -56,7 +60,6 @@ def train_stream(input_dir):
                 X.pop(0)
                 X.append(result.idx)
 
-device = T.device("cuda")
 class DS(T.utils.data.IterableDataset):
     def __init__(self, gen):
         super(DS).__init__()
@@ -89,6 +92,7 @@ class RNN(T.nn.Module):
         return hidden
 
 BATCHSIZE = 100
+ppl = []
 def train(rnn, loader, epoch):
     criterion = T.nn.CrossEntropyLoss()
     optimizer = T.optim.Adam(rnn.parameters(), lr=0.001)
@@ -96,6 +100,7 @@ def train(rnn, loader, epoch):
     ti = time()
     counter = 0
     avg_loss = 0.
+    rep_loss = 0.
     state_h, state_c = rnn.init_hidden(BATCHSIZE)
     for x, y in loader:
         counter += 1
@@ -111,9 +116,14 @@ def train(rnn, loader, epoch):
         # T.nn.utils.clip_grad_norm_(rnn.parameters(), 0.5)
         optimizer.step()
         avg_loss += loss.item()
+        rep_loss += loss.item()
+        if counter % 100 == 0:
+            ppl.append(np.exp(rep_loss/100))
+            rep_loss = 0.
         if counter % 1000 == 0:
             print("epoch: {} batch: {} (last 1000 batches in {:.2f} s) Average Loss: {}".format(epoch, counter, time() - ti, avg_loss/counter))
             ti = time()
+    print(ppl)
 
 
 def main():
@@ -124,7 +134,7 @@ def main():
     # warm up
     i = 0
     for _ in train_stream(args.input_dir):
-        if i == 1000000:
+        if i == 300000:
             break
         i += 1
 
@@ -133,7 +143,7 @@ def main():
     rnn.train()
     try:
         for e in range(1):
-            ds = DS(train_stream(args.input_dir))
+            ds = DS(train_stream(args.input_dir, 300000))
             loader = T.utils.data.DataLoader(ds, batch_size=BATCHSIZE, drop_last=True)
             train(rnn, loader, e)
     except KeyboardInterrupt:
