@@ -3,18 +3,20 @@
 import argparse
 import numpy as np
 import torch as T
+from collections import namedtuple
 from data import read_files_dir, strip_words
 from time import time
-from vocabularies import StaticVocabulary, DynamicVocabulary
+from static_vocabulary import StaticVocabulary
+from dynamic_vocabulary_2q import DynamicVocabulary2Q
 
 device = T.device("cuda")
-LOOKBACK = 4
+LOOKBACK = 10
 BATCHSIZE = 100
-REPORTPPL = 100
 REPORTLOSS = 1000
 VOCABSIZE = 10000
 FILLVOCAB = 300000
-TRAINLIMIT = 3000000
+TRAINLIMIT = 200000
+
 
 class DS(T.utils.data.IterableDataset):
     def __init__(self, gen):
@@ -31,7 +33,7 @@ class RNN(T.nn.Module):
         self.n_layers = n_layers
 
         self.embed = T.nn.Embedding(num_embeddings, embedding_dim)
-        self.gru = T.nn.LSTM(input_size=embedding_dim, hidden_size=hidden_dim, num_layers=n_layers, batch_first=True)
+        self.gru = T.nn.LSTM(input_size=embedding_dim, hidden_size=hidden_dim, num_layers=n_layers, batch_first=True, dropout=0.2)
         self.fc = T.nn.Linear(hidden_dim, num_embeddings)
         self.softmax = T.nn.LogSoftmax(dim=1)
 
@@ -48,70 +50,99 @@ class RNN(T.nn.Module):
         )
         return hidden
 
-def train_stream(input_dir, vocabulary, skip=0, stop=None):
+def train_stream(text, vocabulary):
     X = []
-    words = 0
-    for text in read_files_dir(input_dir):
-        for word in strip_words(text):
-            words += 1
-            if words <= skip:
-                continue
-            if stop is not None and words > stop:
-                break
+    for word in strip_words(text):
+        idx = vocabulary.word2idx(word)
+        if len(X) <= LOOKBACK:
+            X.append(idx)
+        else:
+            x = X.copy()
+            yield x[:-1], x[-1]
+            X.pop(0)
+            X.append(idx)
 
-            idx = vocabulary.word2idx(word)
-            if len(X) <= LOOKBACK:
-                X.append(idx)
-            else:
-                x = X.copy()
-                yield x[:-1], x[-1]
-                X.pop(0)
-                X.append(idx)
+def print_pred(rnn, vocab, orig):
+    with T.no_grad():
+        h = rnn.init_hidden(1)
+        x = orig[:LOOKBACK]
+        text = [vocab.idx2word(idx.item()) for idx in x]
+        for i in range(LOOKBACK, 50):
+            out, h = rnn(x.view(1, LOOKBACK), h)
+            out = out[0][1:]
+            p = T.nn.functional.softmax(out, dim=0).detach().cpu().numpy()
+            idx = np.random.choice(range(1, VOCABSIZE), p=p)
+            text.append(vocab.idx2word(idx))
+            x = T.cat([x[1:], T.tensor([idx]).to(device)])
 
-def train(rnn, loader):
-    criterion = T.nn.NLLLoss()
-    optimizer = T.optim.Adam(rnn.parameters(), lr=0.001)
+    print(' '.join(text), "\n", flush=True)
 
-    ppl = []
-    ti = time()
-    counter = 0
-    avg_loss = 0.
-    rep_loss = 0.
+class TrainState:
+    def __init__(self, time, counter, avg_loss, unknowns, ppl, uwr):
+        self.time = time
+        self.counter = counter
+        self.avg_loss = avg_loss
+        self.unknowns = unknowns
+        self.ppl = ppl
+        self.uwr = uwr
+
+def train(rnn, criterion, optimizer, loader, vocab, state):
     state_h, state_c = rnn.init_hidden(BATCHSIZE)
     for x, y in loader:
-        counter += 1
+        state.counter += 1
         optimizer.zero_grad()
         out, (state_h, state_c) = rnn(x, (state_h, state_c))
-        # print(out.shape, y.shape)
         loss = criterion(out, y.T)
+        state.unknowns += (out.topk(1)[1] == 0).nonzero().shape[0]
 
         state_h = state_h.detach()
         state_c = state_c.detach()
 
         loss.backward()
         optimizer.step()
-        avg_loss += loss.item()
-        rep_loss += loss.item()
-        if counter % REPORTPPL == 0:
-            ppl.append(np.exp(rep_loss/REPORTPPL))
-            rep_loss = 0.
-        if counter % REPORTLOSS == 0:
-            print("batch: {} (last {} batches in {:.2f} s) Average Loss: {}".format(counter, REPORTLOSS, time() - ti, avg_loss/REPORTLOSS))
-            avg_loss = 0.
-            ti = time()
-    print(ppl)
+        state.avg_loss += loss.item()
+        if state.counter % REPORTLOSS == 0:
+            tt = time() - state.time
+            unk = state.unknowns/(REPORTLOSS*BATCHSIZE)
+            state.uwr.append(unk)
+            ll = state.avg_loss/REPORTLOSS
+            ppla = np.exp(ll)
+            pplr = ppla/VOCABSIZE
+            ppla += VOCABSIZE * unk * pplr
+            print("batch: {} (last {} batches in {:.2f} s), unknown word ratio: {:.3f}, average loss: {:.4f}, ppl: {:.4f}".format(
+                state.counter, REPORTLOSS, tt, unk, ll, ppla
+            ), flush=True)
+            print_pred(rnn, vocab, y)
+            state.ppl.append(ppla)
+            state.avg_loss = 0.
+            state.unknowns = 0
+            state.time = time()
+    # print(ppl, flush=True)
+    # print(uwr, flush=True)
+    return state
 
-def make_loader(input_dir, vocab):
-    ds = DS(train_stream(input_dir, vocab, FILLVOCAB, TRAINLIMIT))
+def make_loader(text, vocab):
+    ds = DS(train_stream(text, vocab))
     loader = T.utils.data.DataLoader(ds, batch_size=BATCHSIZE, drop_last=True)
     return loader
 
 def make_rnn():
-    rnn = RNN(VOCABSIZE, 128, 256, 1)
+    rnn = RNN(VOCABSIZE, 128, 256, 2)
     rnn.to(device)
     rnn.train()
-    return rnn
+    criterion = T.nn.NLLLoss()
+    optimizer = T.optim.Adam(rnn.parameters(), lr=0.001)
 
+    return rnn, criterion, optimizer
+
+def full_train(text_gen, vocab):
+    rnn, criterion, optimizer = make_rnn()
+    state = TrainState(time(), 0, 0., 0, [], [])
+    for text in text_gen:
+        loader = make_loader(text, vocab)
+        state = train(rnn, criterion, optimizer, loader, vocab, state)
+        if state.counter*BATCHSIZE >= TRAINLIMIT:
+            break
 
 def train_static(input_dir):
     static = StaticVocabulary(VOCABSIZE)
@@ -119,37 +150,42 @@ def train_static(input_dir):
     # warm up
     i = 0
     words = []
-    for text in read_files_dir(input_dir):
+    text_gen = read_files_dir(input_dir)
+    for text in text_gen:
+        if i >= FILLVOCAB:
+            break
         for word in strip_words(text):
-            if i == FILLVOCAB:
-                break
-            i += 1
             words.append(word)
+            i += 1
     static.fill(words)
 
-    train(make_rnn(), make_loader(input_dir, static))
+    full_train(text_gen, static)
 
 def train_dynamic(input_dir):
-    dynamic = DynamicVocabulary(VOCABSIZE, VOCABSIZE/4)
+    dynamic = DynamicVocabulary2Q(VOCABSIZE)
 
     # warm up
     i = 0
-    for text in read_files_dir(input_dir):
+    text_gen = read_files_dir(input_dir)
+    for text in text_gen:
+        if i >= FILLVOCAB:
+            break
         for word in strip_words(text):
-            if i == FILLVOCAB:
-                break
-            i += 1
             dynamic.word2idx(word)
+            i += 1
 
-    train(make_rnn(), make_loader(input_dir, dynamic))
+    full_train(text_gen, dynamic)
+
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('input_dir', type=str)
     args = parser.parse_args()
 
+    print("\tDYNAMIC\n", flush=True)
+    train_dynamic(args.input_dir)
+    print("\tSTATIC\n", flush=True)
     train_static(args.input_dir)
-    # train_dynamic(args.input_dir)
 
 
 
