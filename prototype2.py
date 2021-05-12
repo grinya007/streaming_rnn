@@ -4,7 +4,7 @@ import argparse
 import numpy as np
 import torch as T
 from collections import namedtuple
-from data import read_files_dir, strip_words
+from data import read_texts_csv, strip_words
 from time import time
 from static_vocabulary import StaticVocabulary
 from dynamic_vocabulary_2q import DynamicVocabulary2Q
@@ -144,13 +144,13 @@ def full_train(text_gen, vocab):
         if state.counter*BATCHSIZE >= TRAINLIMIT:
             break
 
-def train_static(input_dir):
+def train_static(input_csv):
     static = StaticVocabulary(VOCABSIZE)
 
     # warm up
     i = 0
     words = []
-    text_gen = read_files_dir(input_dir)
+    text_gen = read_texts_csv(input_csv, 'content')
     for text in text_gen:
         if i >= FILLVOCAB:
             break
@@ -161,12 +161,12 @@ def train_static(input_dir):
 
     full_train(text_gen, static)
 
-def train_dynamic(input_dir):
+def train_dynamic(input_csv):
     dynamic = DynamicVocabulary2Q(VOCABSIZE)
 
     # warm up
     i = 0
-    text_gen = read_files_dir(input_dir)
+    text_gen = read_texts_csv(input_csv, 'content')
     for text in text_gen:
         if i >= FILLVOCAB:
             break
@@ -179,13 +179,13 @@ def train_dynamic(input_dir):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('input_dir', type=str)
+    parser.add_argument('input_csv', type=str)
     args = parser.parse_args()
 
     print("\tDYNAMIC\n", flush=True)
-    train_dynamic(args.input_dir)
+    train_dynamic(args.input_csv)
     print("\tSTATIC\n", flush=True)
-    train_static(args.input_dir)
+    train_static(args.input_csv)
 
 
 
