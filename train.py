@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import argparse
-import numpy as np
 from data import read_texts_csv, strip_words
 from plot import save_plot
 from model import torch_device, make_data_loader, make_rnn, train_iteration, RNN, TrainState
@@ -10,14 +9,35 @@ from dynamic_vocabulary_2q import DynamicVocabulary2Q
 from dynamic_vocabulary_lru import DynamicVocabularyLRU
 from static_vocabulary import StaticVocabulary
 
+# the size of a sequence after which the next word is predicted
 LOOKBACK = 10
+
+# the size of a batch
 BATCHSIZE = 100
+
+# log and store chart values every REPORTEVERY batches
 REPORTEVERY = 1000
+
+# the size of a vocabulary
 VOCABSIZE = 10000
+
+# this many words are used to populate StaticVocabulary
+# and warm up DynamicVocabulary*
 FILLVOCAB = 500000
+
+# this many words that go right after the FILLVOCAB
+# are used for training
 TRAINLIMIT = 3000000
+
+# this many articles in the dataset are skipped to get
+# to the point where articles are more dense in terms of
+# publication date
 SKIPARTICLES = 50000
+
+# device to be used by PyTorch
+# (change to 'cpu' if no nvidia card is available)
 DEVICE = 'cuda'
+
 
 def word_index_generator(text, vocab):
     for word in strip_words(text):
