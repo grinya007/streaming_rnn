@@ -6,12 +6,12 @@ To run the experiment on the [All the news](https://www.kaggle.com/snapcrack/all
 
 
 ```
-git clone https://github.com/grinya007/streaming_rnn.git
-cd streaming_rnn
-pip3 install -r requirements.txt
-kaggle datasets download -d snapcrack/all-the-news  # or curl/wget the zip archive
-unzip all-the-news.zip
-python3
+$ git clone https://github.com/grinya007/streaming_rnn.git
+$ cd streaming_rnn
+$ pip3 install -r requirements.txt
+$ kaggle datasets download -d snapcrack/all-the-news  # or curl/wget the zip archive
+$ unzip all-the-news.zip
+$ python3
 >>> import pandas as pd
 >>> df1 = pd.read_csv('articles1.csv')
 >>> df2 = pd.read_csv('articles2.csv')
@@ -21,7 +21,7 @@ python3
 >>> df.to_csv('articles_sorted_by_date.csv')
 >>> Ctrl+D
 
-./train.py articles_sorted_by_date.csv
+$ ./train.py articles_sorted_by_date.csv
 ```
 
 This will produce some output and generate two .png files with charts of Model perplexity and Unknown word prediction ratio.
