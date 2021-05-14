@@ -9,7 +9,8 @@ def read_texts_csv(csv_file, column):
 
 def strip_words(text):
     filters = set(['’', '’’', "'", "''"])
-    for match in re.finditer(r"[-'’a-zA-Z0-9\$]+|[\—\.\,\?\!\:\;]", text):
+    finder = re.finditer(r"[-'’a-zA-Z0-9\$]+|[\—\.\,\?\!\:\;]", text)
+    for match in finder:
         word = match.group(0).lower()
         if word in filters:
             continue

@@ -1,56 +1,23 @@
 #!/usr/bin/env python3
 
 import argparse
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
 
 from data import read_texts_csv, strip_words
+from plot import save_plot
 
 from static_vocabulary import StaticVocabulary
-from dynamic_vocabulary_lru import DynamicVocabularyLRU
 from dynamic_vocabulary_2q import DynamicVocabulary2Q
 
-VOCABSIZE = 10000
-FILLVOCAB = 500000
-RUNTESTON = 5000000
-PLOTEVERY = 100000
-
-def save_plot(title: str, data: dict, plot_file: str):
-    lines = []
-    values = []
-    for key, value in data.items():
-        lines.append(key)
-        values.append(value)
-
-    data = pd.DataFrame(np.array(values).T, columns=lines)
-
-    fig, ax = plt.subplots(1, figsize=(10, 5))
-    fig.suptitle(title)
-
-    x = np.arange(0, data.shape[0] * PLOTEVERY, PLOTEVERY)
-    for col in data.columns.tolist():
-        ax.plot(x, col, data=data)
-
-    plt.xlabel(f'word count')
-    plt.grid(b=True, which='major', color='#666666', linestyle='-')
-    plt.minorticks_on()
-    plt.grid(b=True, which='minor', color='#999999', linestyle='-', alpha=0.2)
-    plt.legend()
-
-    plt.savefig(plot_file)
-
-
+VOCABSIZE = 110000
+FILLVOCAB = 10000000
+RUNTESTON = 100000000
+PLOTEVERY = 2000000
 
 def plot_unknown_words_ratio(input_csv):
-    stat = {
-        'StaticVocabulary': [],
-        'DynamicVocabulary2Q': []
-    }
     static = StaticVocabulary(VOCABSIZE)
     dynamic = DynamicVocabulary2Q(VOCABSIZE)
 
-    # warm up
+    # feeding vocabularies
     i = 0
     words = []
     text_gen = read_texts_csv(input_csv, 'content')
@@ -63,34 +30,46 @@ def plot_unknown_words_ratio(input_csv):
             i += 1
     static.fill(words)
 
+    # 2016-02-19
+
+    # test
     i = 0
     count = 0
     static_unknowns = 0
     dynamic_unknowns = 0
+    stat = {
+        'StaticVocabulary': [],
+        'DynamicVocabulary2Q': []
+    }
     for text in text_gen:
         if i >= RUNTESTON:
             break
         for word in strip_words(text):
+            # NOTE index 0 means that a word is unknown
             static_unknowns += 1 if static.word2idx(word) == 0 else 0
             dynamic_unknowns += 1 if dynamic.word2idx(word) == 0 else 0
             if count == PLOTEVERY:
-                stat['StaticVocabulary'].append(static_unknowns/count)
-                stat['DynamicVocabulary2Q'].append(dynamic_unknowns/count)
-                count = 0
+                stat['StaticVocabulary'].append(100*static_unknowns/count)
+                stat['DynamicVocabulary2Q'].append(100*dynamic_unknowns/count)
                 static_unknowns = 0
                 dynamic_unknowns = 0
+                count = 0
             count += 1
             i += 1
 
-    save_plot('Unknown words ratio', stat, 'plot.png')
+    save_plot('Unknown words ratio', 'word count', '%', stat, PLOTEVERY, 'uwr.png')
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('input_csv', type=str)
+    parser.add_argument(
+        'input_csv',
+        type=str,
+        help="Path to the input csv file",
+    )
     args = parser.parse_args()
 
-    stat = plot_unknown_words_ratio(args.input_csv)
+    plot_unknown_words_ratio(args.input_csv)
 
 
 if __name__ == '__main__':

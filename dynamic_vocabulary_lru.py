@@ -26,13 +26,13 @@ class DynamicVocabularyLRU:
             # and assigned the same idx
             idx = self._word2idx[word]
             del self._word2idx[word]
-        elif len(self._word2idx) == self.size:
+        elif len(self._word2idx) == self.size - 1:
             # if the queue is full, evict the least recently used
             # item, the idx is then freed for reuse
             _, idx = self._word2idx.popitem(0)
             self._idx2word[idx] = word
         else:
-            # if there's still space within self.size
+            # if there's still space within self.size - 1
             # assign a new idx to a word
             # NOTE: in order to make this vocabulary interchangeable with
             #   the other two, index 0 is never used, because it's
