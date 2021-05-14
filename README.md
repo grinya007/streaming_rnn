@@ -20,6 +20,7 @@ python3
 >>> df = df.sort_values('date')
 >>> df.to_csv('articles_sorted_by_date.csv')
 >>> Ctrl+D
+
 ./train.py articles_sorted_by_date.csv
 ```
 
