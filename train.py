@@ -40,23 +40,45 @@ DEVICE = 'cuda'
 
 
 def word_index_generator(text, vocab):
+    """
+    Creates a word index generator from the text
+    """
     for word in strip_words(text):
         yield vocab.word2idx(word)
 
+
 def train(text_gen, vocab, device):
+    """
+    Runs the whole trainig process for a single vocabulary
+    """
     rnn, criterion, optimizer = make_rnn(VOCABSIZE, 256, 256, 2, 0.2)
     rnn.to(device)
 
+    # the TrainState is meant for collecting stats for the charts
+    # as well as logging during the training
     state = TrainState(BATCHSIZE, REPORTEVERY, print_log=True)
+
     for text in text_gen:
+
+        # the TRAINLIMIT isn't exact it may be slightly exceeded
+        # because the check is done every article but not every word
         if state.batch_counter*BATCHSIZE > TRAINLIMIT:
             break
+
+        # a new DataLoader is created for every article
+        # so is a new hidden state of LSTM (inside of the train_iteration())
+        # this is to avoid learning from the junction of articles
+        # which is unlikely to make any sense
         loader = make_data_loader(word_index_generator(text, vocab), BATCHSIZE, LOOKBACK)
         state = train_iteration(loader, rnn, criterion, optimizer, state, device)
 
     return state
 
 def train_static(input_csv, device):
+    """
+    Populates the StaticVocabulary from the first FILLVOCAB
+    words and executes the training
+    """
     static = StaticVocabulary(VOCABSIZE)
 
     # warm up
@@ -78,6 +100,10 @@ def train_static(input_csv, device):
     return train(text_gen, static, device)
 
 def train_dynamic(input_csv, device, dynamic_class):
+    """
+    Populates a dynamic vocabulary from the first FILLVOCAB
+    words and executes the training
+    """
     dynamic = dynamic_class(VOCABSIZE)
 
     # warm up
@@ -113,7 +139,7 @@ def main():
     print("\n\tDYNAMIC LRU\n", flush=True)
     dynamic_lru_state = train_dynamic(args.input_csv, device, DynamicVocabularyLRU)
 
-    save_plot('Unknown words prediction ratio', 'word count', '%', {
+    save_plot('Unknown word prediction ratio', 'word count', '%', {
         'StaticVocabulary': static_state.unknowns_ratio,
         'DynamicVocabulary2Q': dynamic_2q_state.unknowns_ratio
     }, REPORTEVERY*BATCHSIZE, 'uwpr.png')

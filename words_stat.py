@@ -57,7 +57,7 @@ def plot_unknown_words_ratio(input_csv):
             count += 1
             i += 1
 
-    save_plot('Unknown words ratio', 'word count', '%', stat, PLOTEVERY, 'uwr.png')
+    save_plot('Unknown word ratio', 'word count', '%', stat, PLOTEVERY, 'uwr.png')
 
 
 def main():

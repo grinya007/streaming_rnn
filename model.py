@@ -34,9 +34,9 @@ class RNN(torch.nn.Module):
 
     def forward(self, x, h):
         embeds = self.embed(x)
-        out, nh = self.lstm(embeds, h)
+        out, h = self.lstm(embeds, h)
         logits = self.softmax(self.fc(out[:, -1]))
-        return logits, nh
+        return logits, h
 
     def init_hidden(self, batch_size):
         hidden = (
