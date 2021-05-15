@@ -1,4 +1,4 @@
-# Dynamic vocabulary for RNN experiment
+# Dynamic vocabulary for RNN
 To run the experiment on the [All the news](https://www.kaggle.com/snapcrack/all-the-news) dataset make sure:
 * you have CUDA device available (otherwise it will take very long)
 * you have 1.5 Gb of disk space to download, unzip and concatenate the dataset
