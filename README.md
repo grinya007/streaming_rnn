@@ -1,4 +1,6 @@
 # Dynamic vocabulary for RNN
+The experiment is described in [this article](https://towardsdatascience.com/streaming-vocabulary-for-natural-language-modeling-dynamic-words-replacement-efa5b04cad81) in Towards Data Science.
+
 To run the experiment on the [All the news](https://www.kaggle.com/snapcrack/all-the-news) dataset make sure:
 * you have CUDA device available (otherwise it will take very long)
 * you have 1.5 Gb of disk space to download, unzip and concatenate the dataset
